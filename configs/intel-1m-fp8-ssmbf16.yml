@@ -1,0 +1,112 @@
+# Qwen3.8-Flash-Next — Intel AutoRound W4A16 on vllm-intel-sm80 (SM80 PP3).
+# 1M context via YaRN x4 + the layer_types bridge (transformers 5.18 renames
+# full_attention -> indexed_attention; the model code wants the canonical QSA
+# vocabulary). Inline MTP drafter; PLE table served from NVMe page cache via
+# VLLM_PLE_MMAP=1 (set in the launcher environment, not here).
+#
+# Format: vLLM config file — bool -> flag, nested dict -> JSON, key uses
+# argparse dashes. Anything passed on the CLI after --config overrides this.
+model: /models/qwen38fn-w4a16-autoround
+served-model-name: qwen3.8
+host: 0.0.0.0
+port: 8000
+
+# parallelism (no P2P on this box: TP is off the table; PP carries it)
+distributed-executor-backend: mp
+tensor-parallel-size: 1
+pipeline-parallel-size: 3
+disable-custom-all-reduce: true
+
+# serving geometry
+dtype: bfloat16
+max-model-len: 1048576
+block-size: 1632
+max-num-seqs: 8
+max-num-batched-tokens: 8192
+gpu-memory-utilization: 0.92
+kv-cache-dtype: fp8_e4m3
+enable-prefix-caching: true
+enable-chunked-prefill: true
+mamba-cache-mode: align
+async-scheduling: true
+
+# compilation: full decode graphs + piecewise prefill capture
+compilation-config:
+  cudagraph_mode: FULL_AND_PIECEWISE
+enable-flashinfer-autotune: false
+
+# spec decode: inline MTP (checkpoint ships the draft in model_extra_tensors)
+
+# templates & parsers (froggeric chat template mounted at /opt)
+chat-template: /opt/chat_template.jinja
+trust-request-chat-template: true
+enable-auto-tool-choice: true
+tool-call-parser: qwen3_xml
+reasoning-parser: qwen3
+enable-prompt-tokens-details: true
+default-chat-template-kwargs:
+  enable_thinking: true
+  preserve_thinking: true
+  reasoning_effort: xhigh
+
+# RoPE/context extension + layer_type bridge
+hf-overrides:
+  text_config:
+    layer_types:
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - qwen_sparse_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - qwen_sparse_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - qwen_sparse_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - qwen_sparse_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - qwen_sparse_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - qwen_sparse_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - qwen_sparse_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - qwen_sparse_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - qwen_sparse_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - qwen_sparse_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - qwen_sparse_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - qwen_sparse_attention
+    rope_parameters:
+      rope_type: yarn
+      factor: 4.0
+      original_max_position_embeddings: 262144
+      rope_theta: 10000000
+      partial_rotary_factor: 0.25
+      mrope_interleaved: true
+      mrope_section: [11, 11, 10]
+mamba-ssm-cache-dtype: bfloat16
