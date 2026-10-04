@@ -12,7 +12,7 @@ A working recipe for serving [Intel's INT4-weight AutoRound quant] (Qwen4Exp, 18
 | Context length | ✅ 1,048,576 tokens via YaRN ×4 |
 | KV pool | **5.97M tokens** (5.69× concurrent 1M sessions) |
 | Fixed chat templates | [froggeric's extensively bugfixed Qwen3.8 chat templates] | 
-| Decode | ~69 tok/s single stream |
+| Decode | ~74 tok/s short-context, ~60 tok/s at 1M |
 | Retrieval QA | exact needle recall at all depths through 1M |
 
 The vLLM changes live in the fork [`clee/vllm-sm80`] (see [Patches](#patches)). This repo holds the walkthrough, launcher, serving config, and validation harness.
@@ -92,8 +92,27 @@ Watch the boot log: `Padding mamba page size by ~2%` is healthy; a large or nega
 8k/64k/192k/240k/512k d0.5 ... PASS
 1M (809k ptoks) d0.5 / d0.97 / d0.05 ... PASS   (exact codes, temperature=0)
 17*23 → 391 (deterministic ×3)
-decode 69 tok/s (256-token completion)
 ```
+
+## Performance
+
+Measured cold-cache (unique random prompts so prefix caching can't fake
+prefill), single stream, `temperature=0` — see
+[`tests/bench-results-2026-10-04.md`](tests/bench-results-2026-10-04.md)
+and rerun with [`tests/bench.py`](tests/bench.py):
+
+| ctx | prefill tok/s | TTFT | decode tok/s |
+|----:|--------------:|-----:|-------------:|
+| 4k | 2,389 | 1.7 s | 73.2 |
+| 16k | 3,210 | 5.1 s | 73.3 |
+| 64k | 3,563 | 18.4 s | 74.9 |
+| 256k | 3,345 | 78.4 s | 61.9 |
+| 1M | **4,690** | 223 s | 59.8 |
+
+Prefill per-token rate *improves* past ~64k — the QSA sparse-attention
+crossover (top-2048 budget, no quadratic term; cf. the Qwen tech report's
+7.6× prefill claim at 1M). Decode drops ~74→60 tok/s at 1M: the SM80
+fp8-KV software-dequant tax.
 
 ## Troubleshooting
 
