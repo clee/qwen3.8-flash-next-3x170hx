@@ -14,7 +14,7 @@ PORT=${PORT:-8080}
 IMAGE=${IMAGE:-vllm/vllm-openai:nightly-0cbac6cd1305f710e12193596b27488397bcb205}
 CONFIG=${CONFIG:-$PWD/configs/intel-1m-fp8-ssmbf16.yml}
 FORK=${FORK:-$HOME/src/vllm-sm80}
-PP_PARTITION=${PP_PARTITION:-17,17,14}
+PP_PARTITION=${PP_PARTITION:-16,16,16}
 PLE_STAGED=${PLE_STAGED:-1}   # 1 = shard-direct preadv PLE (default; needs no .bin)
 PLE_MMAP=${PLE_MMAP:-0}       # 1 = legacy assembled-.bin mmap path (reference only)
 PLE_ZERO=${PLE_ZERO:-0}       # 1 = ablation: zero the PLE contribution
@@ -31,10 +31,23 @@ exec docker run -d --pull=never --name "$NAME" \
   -v /home/models:/models:ro \
   -v "$CONFIG:/opt/stack.yml:ro" \
   -v "$D/platforms/interface.py:$V/platforms/interface.py:ro" \
+  -v "$D/config/speculative.py:$V/config/speculative.py:ro" \
+  -v "$D/model_executor/models/config.py:$V/model_executor/models/config.py:ro" \
   -v "$D/models/qwen4_exp/common/ngram_embedding.py:$V/models/qwen4_exp/common/ngram_embedding.py:ro" \
+  -v "$D/models/qwen4_exp/nvidia/model.py:$V/models/qwen4_exp/nvidia/model.py:ro" \
   -v "$D/models/qwen4_exp/nvidia/ngram_embedding.py:$V/models/qwen4_exp/nvidia/ngram_embedding.py:ro" \
   -v "$D/models/qwen4_exp/nvidia/model_state.py:$V/models/qwen4_exp/nvidia/model_state.py:ro" \
   -v "$D/models/qwen4_exp/nvidia/ple_preadv.py:$V/models/qwen4_exp/nvidia/ple_preadv.py:ro" \
+  -v "$D/models/qwen4_exp/nvidia/qsa.py:$V/models/qwen4_exp/nvidia/qsa.py:ro" \
+  -v "$D/models/qwen4_exp/nvidia/indexer_qsa.py:$V/models/qwen4_exp/nvidia/indexer_qsa.py:ro" \
+  -v "$D/models/qwen4_exp/nvidia/mtp.py:$V/models/qwen4_exp/nvidia/mtp.py:ro" \
+  -v "$D/models/qwen4_exp/nvidia/ops/qsa.py:$V/models/qwen4_exp/nvidia/ops/qsa.py:ro" \
+  -v "$D/models/qwen4_exp/nvidia/ops/qsa_prepare.py:$V/models/qwen4_exp/nvidia/ops/qsa_prepare.py:ro" \
+  -v "$D/v1/worker/gpu/model_runner.py:$V/v1/worker/gpu/model_runner.py:ro" \
+  -v "$D/v1/worker/utils.py:$V/v1/worker/utils.py:ro" \
+  -v "$D/v1/ple_offload:$V/v1/ple_offload:ro" \
+  -v "$D/v1/spec_decode/llm_base_proposer.py:$V/v1/spec_decode/llm_base_proposer.py:ro" \
+  -v "$D/v1/worker/gpu/spec_decode/dflash/speculator.py:$V/v1/worker/gpu/spec_decode/dflash/speculator.py:ro" \
   -v "$PWD/runs/triton-cache:/root/.triton:rw" \
   -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 \
   -e NCCL_P2P_DISABLE=1 -e NCCL_DEBUG=WARN \
