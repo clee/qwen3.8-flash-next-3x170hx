@@ -11,9 +11,26 @@
 set -euo pipefail
 NAME=${NAME:-qwen-intel}
 PORT=${PORT:-8080}
-IMAGE=${IMAGE:-vllm/vllm-openai:nightly-0cbac6cd1305f710e12193596b27488397bcb205}
 CONFIG=${CONFIG:-$PWD/configs/intel-1m-fp8-ssmbf16.yml}
-FORK=${FORK:-$HOME/src/vllm-sm80}
+
+# Base image and fork tree are a matched pair. The stack is pure-Python overlay on the
+# pinned nightly's compiled objects, so the checkout must be based on that exact commit:
+# the rebased tree will not import against the older .so set (fused_moe/modular_kernel
+# fails deep in its import chain), and vice versa. Keep BASE and FORK moving together.
+#   old  = q38fn/base 0cbac6cd,  stack tip q38fn/marlin-inv          (qualified, live)
+#   next = 81198e97ba rebased,   stack tip q38fn/marlin-inv-rebased  (needle/bench pending)
+PIN=${PIN:-next}
+case "$PIN" in
+  old)  BASE=${BASE:-0cbac6cd1305f710e12193596b27488397bcb205}; FORK=${FORK:-$HOME/src/vllm-sm80} ;;
+  next) BASE=${BASE:-81198e97ba7eee2a22540caaa756b7fdddcb4d93}; FORK=${FORK:-$HOME/src/vllm-sm80-rebased} ;;
+  *) echo "PIN must be 'old' or 'next' (got '$PIN')" >&2; exit 1 ;;
+esac
+IMAGE=${IMAGE:-vllm/vllm-openai:nightly-$BASE}
+case "$IMAGE" in
+  *"$BASE"*) ;;
+  *) echo "warn: IMAGE does not contain PIN=$PIN base $BASE — mismatched pair will not boot" >&2 ;;
+esac
+[ -e "$FORK/vllm" ] || { echo "fork tree not found: $FORK/vllm (is the jj workspace checked out?)" >&2; exit 1; }
 PP_PARTITION=${PP_PARTITION:-16,16,16}
 PLE_STAGED=${PLE_STAGED:-1}   # 1 = shard-direct preadv PLE (default; needs no .bin)
 PLE_MMAP=${PLE_MMAP:-0}       # 1 = legacy assembled-.bin mmap path (reference only)
