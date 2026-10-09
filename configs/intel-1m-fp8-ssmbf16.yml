@@ -20,7 +20,7 @@ disable-custom-all-reduce: true
 # serving geometry
 dtype: bfloat16
 max-model-len: 1048576
-block-size: 1632
+block-size: 1728
 max-num-seqs: 8
 max-num-batched-tokens: 8192
 gpu-memory-utilization: 0.92
@@ -29,6 +29,21 @@ enable-prefix-caching: true
 enable-chunked-prefill: true
 mamba-cache-mode: align
 async-scheduling: true
+
+# Disk KV tier (persistent prefix cache): CPU primary gateway +
+# NVMe fs secondary. Survives restarts; cross-instance-shareable (stable
+# NONE_HASH => identical token content => identical filenames).
+kv-transfer-config:
+  kv_connector: OffloadingConnector
+  kv_role: kv_both
+  kv_connector_extra_config:
+    spec_name: TieringOffloadingSpec
+    cpu_bytes_to_use: 8589934592    # 8 GiB CPU primary (gateway; 64 GiB pin ceiling)
+    eviction_policy: lru
+    secondary_tiers:
+      - type: fs
+        root_dir: /kv-disk
+        max_bytes: 137438953472     # 128 GiB NVMe secondary (long-term)
 
 # compilation: full decode graphs + piecewise prefill capture
 compilation-config:

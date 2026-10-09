@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Launch the Qwen3.8-Flash-Next SM80 stack.
 #
-# Default: stock pinned nightly image + the fork's patched files bind-
-# mounted (requires the fork checkout at q38fn/ple-nvme-staged; edit
-# it first). For a self-contained image: docker build -t vllm-sm80:q38fn .
-# then IMAGE=vllm-sm80:q38fn ./run-qwen38fn.sh
+# Default: stock pinned nightly image + the fork's patched files bind-mounted.
+# $FORK's checkout must sit on q38fn/stack (the 7d0b4e57 lineage + stack patches +
+# fs-tier LRU capacity cap). For a self-contained image: docker build -t
+# vllm-sm80:q38fn . ; then IMAGE=vllm-sm80:q38fn ./run-qwen38fn.sh
 #
 # All serve args live in configs/intel-1m-fp8-ssmbf16.yml; this script is
 # only container plumbing + the env knobs that aren't CLI args.
@@ -13,24 +13,32 @@ NAME=${NAME:-qwen-intel}
 PORT=${PORT:-8080}
 CONFIG=${CONFIG:-$PWD/configs/intel-1m-fp8-ssmbf16.yml}
 
-# Base image and fork tree are a matched pair. The stack is pure-Python overlay on the
-# pinned nightly's compiled objects, so the checkout must be based on that exact commit:
-# the rebased tree will not import against the older .so set (fused_moe/modular_kernel
-# fails deep in its import chain), and vice versa. Keep BASE and FORK moving together.
-#   old  = q38fn/base 0cbac6cd,  stack tip q38fn/marlin-inv          (qualified, live)
-#   next = 81198e97ba rebased,   stack tip q38fn/marlin-inv-rebased  (needle/bench pending)
-PIN=${PIN:-next}
-case "$PIN" in
-  old)  BASE=${BASE:-0cbac6cd1305f710e12193596b27488397bcb205}; FORK=${FORK:-$HOME/src/vllm-sm80} ;;
-  next) BASE=${BASE:-81198e97ba7eee2a22540caaa756b7fdddcb4d93}; FORK=${FORK:-$HOME/src/vllm-sm80-rebased} ;;
-  *) echo "PIN must be 'old' or 'next' (got '$PIN')" >&2; exit 1 ;;
-esac
+# Base image and fork tree are a matched pair: the stack is a pure-Python
+# overlay on the pinned nightly's compiled objects, so the fork checkout must
+# descend from a lineage based on that exact upstream commit — any other base
+# fails deep in its import chain.
+BASE=${BASE:-7d0b4e57aac4c4323225b0eee9ae960ce75ffffe}
 IMAGE=${IMAGE:-vllm/vllm-openai:nightly-$BASE}
+FORK=${FORK:-$HOME/src/vllm-sm80}
+REQUIRED_REV=${REQUIRED_REV:-q38fn/stack}   # lineage that must be an ancestor of the fork checkout
 case "$IMAGE" in
   *"$BASE"*) ;;
-  *) echo "warn: IMAGE does not contain PIN=$PIN base $BASE — mismatched pair will not boot" >&2 ;;
+  *) echo "warn: IMAGE does not contain base $BASE — mismatched pair will not boot" >&2 ;;
 esac
 [ -e "$FORK/vllm" ] || { echo "fork tree not found: $FORK/vllm (is the jj workspace checked out?)" >&2; exit 1; }
+# Fail fast rather than silently bind-mounting the wrong fork rev: a missing
+# -v source becomes an empty dir inside the container and the boot crashes at
+# import time. warn-only if jj itself can't evaluate; abort on definite mismatch.
+verify_rev() {
+  local out
+  if out=$(jj -R "$FORK" log --no-pager --ignore-working-copy -r "::@ & $1" -T 'commit_id' 2>&1); then
+    [ -n "$out" ] && return 0
+    echo "error: fork checkout not descended from $1 (fix: jj -R $FORK edit q38fn/stack)" >&2; return 1
+  fi
+  echo "warn: could not verify fork revision with jj ($out) — continuing unverified" >&2
+}
+verify_rev "$REQUIRED_REV" || exit 1
+verify_rev "$BASE" || exit 1
 PP_PARTITION=${PP_PARTITION:-16,16,16}
 PLE_STAGED=${PLE_STAGED:-1}   # 1 = shard-direct preadv PLE (default; needs no .bin)
 PLE_MMAP=${PLE_MMAP:-0}       # 1 = legacy assembled-.bin mmap path (reference only)
@@ -46,6 +54,7 @@ exec docker run -d --pull=never --name "$NAME" \
   --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
   -p "0.0.0.0:${PORT}:8000" \
   -v /home/models:/models:ro \
+  -v /home/models/kv-disk:/kv-disk:rw \
   -v "$CONFIG:/opt/stack.yml:ro" \
   -v "$D/platforms/interface.py:$V/platforms/interface.py:ro" \
   -v "$D/config/speculative.py:$V/config/speculative.py:ro" \
@@ -65,6 +74,9 @@ exec docker run -d --pull=never --name "$NAME" \
   -v "$D/v1/ple_offload:$V/v1/ple_offload:ro" \
   -v "$D/v1/spec_decode/llm_base_proposer.py:$V/v1/spec_decode/llm_base_proposer.py:ro" \
   -v "$D/v1/worker/gpu/spec_decode/dflash/speculator.py:$V/v1/worker/gpu/spec_decode/dflash/speculator.py:ro" \
+  -v "$D/v1/kv_offload/tiering/fs/manager.py:$V/v1/kv_offload/tiering/fs/manager.py:ro" \
+  -v "$D/v1/kv_offload/tiering/spec.py:$V/v1/kv_offload/tiering/spec.py:ro" \
+  -v "$D/v1/kv_offload/cpu/spec.py:$V/v1/kv_offload/cpu/spec.py:ro" \
   -v "$PWD/runs/triton-cache:/root/.triton:rw" \
   -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 \
   -e NCCL_P2P_DISABLE=1 -e NCCL_DEBUG=WARN \
